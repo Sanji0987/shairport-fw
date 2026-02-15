@@ -52,3 +52,9 @@ shareport stop    # stops shairport-sync, wipes password, closes ports
 - Password is not in the config file at rest
 - The root helper uses absolute paths to prevent PATH hijacking
 - Input is sanitized before being written to config files
+
+## Why
+Got tired of setting all this up from scratch every time I reinstall Linux.
+
+## License
+[MIT](LICENSE)
