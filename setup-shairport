@@ -120,6 +120,16 @@ esac
 UEOF
 chmod +x "$HOME/.local/bin/shareport"
 
+# Ensure ~/.local/bin is in PATH
+for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    [[ -f "$rcfile" ]] || continue
+    if ! grep -q '\.local/bin' "$rcfile"; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$rcfile"
+        info "Patched $(basename "$rcfile") to include ~/.local/bin in PATH"
+    fi
+done
+export PATH="$HOME/.local/bin:$PATH"
+
 info "Creating systemd user service..."
 mkdir -p "$HOME/.config/systemd/user"
 cat > "$HOME/.config/systemd/user/shairport-sync.service" << 'DEOF'
