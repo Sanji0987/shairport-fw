@@ -14,7 +14,8 @@ error() { echo -e "${RED}[x]${NC} $1"; exit 1; }
 command -v pacman &>/dev/null || error "This script was made for CachyOs/Arch"
 
 info "Installing shairport-sync and checking ufw"
-sudo pacman -S --needed --noconfirm shairport-sync ufw
+sudo pacman -S --needed --noconfirm shairport-sync ufw \
+    sdl2 sdl2_image sdl2_ttf systemd-libs ttf-dejavu meson
 
 command -v shairport-sync &>/dev/null || error "shairport-sync failed to install"
 command -v ufw &>/dev/null || error "ufw failed to install"
@@ -36,6 +37,17 @@ read -rsp "Confirm password: " AIRPLAY_PASS_CONFIRM
 echo ""
 [[ "$AIRPLAY_PASS" != "$AIRPLAY_PASS_CONFIRM" ]] && error "Passwords do not match."
 
+info "Checking shairport-sync build features..."
+SHAIRPORT_VERSION=$(shairport-sync -V 2>&1 || true)
+if ! echo "$SHAIRPORT_VERSION" | grep -qi "dbus"; then
+    warn "shairport-sync was NOT built with D-Bus support."
+    warn "Rebuild from AUR with: --with-dbus-interface"
+fi
+if ! echo "$SHAIRPORT_VERSION" | grep -qi "metadata"; then
+    warn "shairport-sync was NOT built with metadata support."
+    warn "Rebuild from AUR with: --with-metadata"
+fi
+
 info "Writing to shairport-sync config"
 sudo /usr/bin/tee /etc/shairport-sync.conf > /dev/null << SEOF
 general =
@@ -46,6 +58,15 @@ general =
 	output_backend = "pw";
 	udp_port_base = 6001;
 	udp_port_range = 10;
+	dbus_service_bus = "session";
+	mpris_service_bus = "session";
+};
+
+metadata =
+{
+	enabled = "yes";
+	include_cover_art = "yes";
+	cover_art_cache_directory = "/tmp/shairport-sync/.cache/coverart";
 };
 SEOF
 
@@ -101,8 +122,26 @@ mkdir -p "$HOME/.local/bin"
 cat > "$HOME/.local/bin/shareport" << 'UEOF'
 #!/bin/bash
 set -euo pipefail
+DBUS_DEST="org.gnome.ShairportSync"
+DBUS_PATH="/org/gnome/ShairportSync"
+DBUS_RC="$DBUS_DEST.RemoteControl"
+
+dbus_rc() {
+    dbus-send --session --print-reply --type=method_call \
+        --dest="$DBUS_DEST" "$DBUS_PATH" "${DBUS_RC}.$1"
+}
+
+dbus_prop() {
+    dbus-send --session --print-reply --type=method_call \
+        --dest="$DBUS_DEST" "$DBUS_PATH" \
+        org.freedesktop.DBus.Properties.Get \
+        string:"$DBUS_DEST" string:"$1" 2>/dev/null \
+        | sed -n 's/.*string "\(.*\)"/\1/p'
+}
+
 case "${1:-}" in
     start)
+        mkdir -p /tmp/shairport-sync/.cache/coverart
         /usr/bin/pkexec /usr/local/bin/shairport-sync-fw open
         /usr/bin/systemctl --user start shairport-sync
         echo "Shairport Sync started, firewall open."
@@ -112,8 +151,23 @@ case "${1:-}" in
         /usr/bin/pkexec /usr/local/bin/shairport-sync-fw close
         echo "Shairport Sync stopped, firewall closed."
         ;;
+    play)    dbus_rc Play ;;
+    pause)   dbus_rc Pause ;;
+    toggle)  dbus_rc PlayPause ;;
+    next)    dbus_rc Next ;;
+    prev)    dbus_rc Previous ;;
+    volup)   dbus_rc VolumeUp ;;
+    voldown) dbus_rc VolumeDown ;;
+    now)
+        artist=$(dbus_prop "Artist")
+        title=$(dbus_prop "Title")
+        album=$(dbus_prop "Album")
+        echo "  Artist: ${artist:-unknown}"
+        echo "   Title: ${title:-unknown}"
+        echo "   Album: ${album:-unknown}"
+        ;;
     *)
-        echo "Usage: $0 {start|stop}" >&2
+        echo "Usage: $0 {start|stop|play|pause|toggle|next|prev|volup|voldown|now}" >&2
         exit 1
         ;;
 esac
@@ -155,6 +209,8 @@ info "Setup is complete,"
 echo ""
 echo "  Start AirPlay:  shareport start"
 echo "  Stop AirPlay:   shareport stop"
+echo "  Playback:       shareport {play|pause|toggle|next|prev|volup|voldown}"
+echo "  Now playing:    shareport now"
 echo "  Device name:    ${DEVICE_NAME}"
 echo "  Password stored in shairport-sync-password"
 echo "  Ports opened only during use: TCP 5000, UDP 6001-6010 (LAN only)"
